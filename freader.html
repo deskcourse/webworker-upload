@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Using FileReaderSync Example</title>
+  <style>
+    #error { color: red; }
+  </style>
+</head>
+<body>
+    <form enctype="multipart/form-data" action="http://localhost:8080/wrdr/upload" method="post"> 
+      <input type="file" name="file" />
+      <output id="error"></output>
+      <input type="submit" value="upload" /> 
+    </form> 
+    <div>
+        <progress value='0' id="progress"></progress>&nbsp;&nbsp;<span id='rate'>0</span>
+        <br/>
+        00<progress style='visibility:hidden;' value='0' id="progress0"></progress>
+        01<progress style='visibility:hidden;' value='0' id="progress1"></progress>
+        02<progress style='visibility:hidden;' value='0' id="progress2"></progress>
+        03<progress style='visibility:hidden;' value='0' id="progress3"></progress>
+        <br/>
+        04<progress style='visibility:hidden;' value='0' id="progress4"></progress>
+        05<progress style='visibility:hidden;' value='0' id="progress5"></progress>
+        06<progress style='visibility:hidden;' value='0' id="progress6"></progress>
+        07<progress style='visibility:hidden;' value='0' id="progress7"></progress>
+        <br/>
+        08<progress style='visibility:hidden;' value='0' id="progress8"></progress>
+        09<progress style='visibility:hidden;' value='0' id="progress9"></progress>
+        10<progress style='visibility:hidden;' value='0' id="progress10"></progress>
+        11<progress style='visibility:hidden;' value='0' id="progress11"></progress>
+        <br/>
+        12<progress style='visibility:hidden;' value='0' id="progress12"></progress>
+        13<progress style='visibility:hidden;' value='0' id="progress13"></progress>
+        14<progress style='visibility:hidden;' value='0' id="progress14"></progress>
+        15<progress style='visibility:hidden;' value='0' id="progress15"></progress>
+        <br/>
+    </div>
+<script>
+  var minSendSize = 1*1024*1024;
+  var parallelUploads = 16;
+  var workerArr = [];
+  var doneCount = 0;
+  var progress = 0;
+
+  document.querySelector('input[type="file"]').addEventListener('change', function(e) {
+    var nc = parallelUploads;
+    workerArr = [];
+    doneCount = 0;
+    progress = 0;
+    var fsz = this.files[0].size;
+    if (fsz <= minSendSize) nc = 1;
+
+    // hide the per thread progress elements
+    for(var j=0; j<parallelUploads; j++) {
+      var divName = 'progress' + j;
+      var di = window.document.getElementById(divName);
+      if (di != null) {
+          di.style.visibility = 'hidden';
+          di.value = 0;
+      }
+    }
+
+    var start = new Date();
+    console.log('' + start.getTime() + ":Starting"); 
+    for(var i=0; i<nc; i++) {
+      if (i*minSendSize > fsz)  { nc = i; break;}
+      var worker = new Worker('js/worker2.js');
+      workerArr[i] = worker;
+      var divName = 'progress' + i;
+      var di = window.document.getElementById(divName);
+      di.style.visibility = 'visible';
+
+      worker.onmessage = function(e) {
+        //console.log(e.data + ':' + (new Date()).getTime()); 
+        var val = '' + (e.data.val || '');
+        var workerIndex = parseInt(e.data.i);
+        if (e.data.val === "ready" ) {
+          workerArr[workerIndex].postMessage('');
+        }
+        if (e.data.val === 'progress') {
+            var bys = parseInt(e.data.bytesSent);
+            progress = progress + bys;
+            var pct = (1.0*progress/fsz);
+
+            var divId = window.document.getElementById('progress');
+            divId.value = pct;
+
+            divId = window.document.getElementById('progress' + workerIndex);
+            divId.value = divId.value + 1;
+
+            divId = window.document.getElementById('rate');
+            var end = new Date();
+            var diff = (end.getTime() - start.getTime())/1000;
+            var mbys = (1.0*progress/(1024*1024)) / diff;
+            divId.textContent = mbys.toFixed(2);
+        }
+        if (e.data.val === 'done') {
+          doneCount++;
+          workerArr[workerIndex].postMessage('terminate');
+        }
+        //console.log('' + (new Date()).getTime() + ':' + e.data.i + ':' + val + ':' ); // e.data should be an array of ArrayBuffers.
+        //console.log('' + (new Date()).getTime() + ':' + e.data.i + ':' + e.data.rpos + ':' + e.data.bl.size); // e.data should be an array of ArrayBuffers.
+        if (e.data.val !== "sending" && e.data.val !== "done") {
+          //workerArr[workerIndex].postMessage('');
+        }
+        if (doneCount === getNc()) {
+          var end = new Date();
+          console.log('' + end.getTime() + ": Completed!");
+          var diff = (end.getTime() - start.getTime())/1000;
+          console.log('Total time: ' + diff + 's');
+          var mbys = (1.0*fsz/(1024*1024)) / diff;
+          console.log('Mbytes/sec: ' + mbys.toFixed(2));
+          workerArr = [];
+        }
+      };
+
+      worker.onerror = function(e) {
+        document.querySelector('#error').textContent = [
+        'ERROR: Line ', e.lineno, ' in ', e.filename, ': ', e.message].join('');
+      };
+    }
+    var maxSendsPerWorker = Math.ceil(fsz/(nc*minSendSize));
+    function getNc() { return nc; }
+    function getSPW() { return maxSendsPerWorker; }
+    //worig.postMessage(this.files[0]);
+    for(var i=0; i<nc; i++) {
+        var divName = 'progress' + i;
+        var di = window.document.getElementById(divName);
+        di.max = maxSendsPerWorker;
+        di.value = 0;
+        var ff = function(wa, i,f,n,mSz) { 
+            return function() { 
+                wa[i].postMessage({ 'i' : i, 'f': f, 't': n, 'rsz' : mSz});
+              } 
+            }(workerArr, i, this.files[0], nc, minSendSize);
+        setTimeout(ff,i*111);
+    }
+  }, false);
+</script>
+</body>
+</html>
+
